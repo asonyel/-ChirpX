@@ -19,27 +19,24 @@ export default function AuthPage() {
 
     if (mode === 'signin') {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
-      setMessage(error ? error.message : 'Signed in successfully.');
+      if (error) setMessage(error.message);
+      else window.location.href = '/';
       setBusy(false);
       return;
     }
 
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { username, display_name: displayName || username } },
+    });
+
     if (error) {
       setMessage(error.message);
-      setBusy(false);
-      return;
-    }
-
-    if (data.user && data.session) {
-      const profile = await supabase.from('profiles').insert({
-        id: data.user.id,
-        username,
-        display_name: displayName || username,
-      });
-      setMessage(profile.error ? profile.error.message : 'Account created. Welcome to Chirpx.');
+    } else if (data.session) {
+      window.location.href = '/';
     } else {
-      setMessage('Check your email to confirm your Chirpx account, then sign in to finish your profile.');
+      setMessage('Check your email to confirm your Chirpx account, then sign in.');
     }
     setBusy(false);
   }
@@ -54,7 +51,7 @@ export default function AuthPage() {
           <button className={`tab ${mode==='signin'?'active':''}`} onClick={()=>setMode('signin')}>Sign in</button>
         </div>
         <form onSubmit={submit} style={{display:'grid',gap:12}}>
-          {mode==='signup' && <><input required minLength={3} maxLength={30} placeholder="Username" value={username} onChange={e=>setUsername(e.target.value)} style={field}/><input required placeholder="Display name" value={displayName} onChange={e=>setDisplayName(e.target.value)} style={field}/></>}
+          {mode==='signup' && <><input required minLength={3} maxLength={30} pattern="[A-Za-z0-9_]+" placeholder="Username" value={username} onChange={e=>setUsername(e.target.value)} style={field}/><input required maxLength={80} placeholder="Display name" value={displayName} onChange={e=>setDisplayName(e.target.value)} style={field}/></>}
           <input required type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} style={field}/>
           <input required minLength={8} type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} style={field}/>
           <button className="primary" disabled={busy}>{busy?'Working…':mode==='signup'?'Create Chirpx account':'Sign in'}</button>
