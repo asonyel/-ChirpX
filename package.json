@@ -1,0 +1,26 @@
+{
+  "name": "chirpx-production",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mux/mux-player-react": "3.13.2",
+    "@supabase/supabase-js": "2.112.4",
+    "next": "16.3.3",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "tus-js-client": "4.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "typescript": "5.9.2"
+  }
+}
