@@ -10,6 +10,8 @@
 6. `video.asset.track.ready` records the generated caption track, reruns moderation using transcript text plus sampled frames, and creates configured subtitle translations.
 7. The Clips UI uses Mux Player for adaptive HLS playback when a Mux playback ID is available and falls back to the private source-video URL only before transcoding is complete.
 
+The web player is pinned to `@mux/mux-player-react@3.13.2`, and the synchronized npm lockfile records the complete HLS/player dependency graph with integrity hashes.
+
 ## Required production secrets
 
 Set these only in Supabase Edge Function Secrets. Never expose them in `NEXT_PUBLIC_*`, source code, GitHub, or client-side JavaScript.
