@@ -1,18 +1,78 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { supabase } from '@/lib/supabase';
 
 type FeedMode = 'for-you' | 'following';
-
-const posts = [
-  { id: 1, name: 'Chirpx Team', handle: '@chirpx', time: 'now', body: 'Welcome to the new Chirpx foundation — conversations, communities, creators and short video in one AI-native network.', initials: 'CX' },
-  { id: 2, name: 'Creator Network', handle: '@creators', time: '12m', body: 'Chirpx Clips will make short-form video a first-class citizen without pushing text conversations into the background.', initials: 'CR' },
-  { id: 3, name: 'Community Hub', handle: '@community', time: '29m', body: 'Following stays chronological. For You earns attention through relevance, diversity, freshness and healthy engagement — not raw virality alone.', initials: 'CH' },
-];
+type FeedPost = {
+  id: string;
+  author_id: string;
+  body: string;
+  created_at: string;
+  author?: { username: string; display_name: string };
+};
 
 export default function Home() {
   const [mode, setMode] = useState<FeedMode>('for-you');
   const [draft, setDraft] = useState('');
+  const [posts, setPosts] = useState<FeedPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [posting, setPosting] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  const loadFeed = useCallback(async (feedMode: FeedMode) => {
+    setLoading(true);
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) {
+      window.location.href = '/auth';
+      return;
+    }
+    setCurrentUserId(auth.user.id);
+
+    const fn = feedMode === 'following' ? 'following_feed' : 'for_you_feed';
+    const { data, error } = await supabase.rpc(fn, { limit_count: 30 });
+    if (error) {
+      console.error(error);
+      setPosts([]);
+      setLoading(false);
+      return;
+    }
+
+    const raw = (data ?? []) as FeedPost[];
+    const authorIds = [...new Set(raw.map((p) => p.author_id))];
+    const { data: profiles } = authorIds.length
+      ? await supabase.from('profiles').select('id,username,display_name').in('id', authorIds)
+      : { data: [] as { id: string; username: string; display_name: string }[] };
+
+    const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
+    setPosts(raw.map((post) => ({ ...post, author: profileMap.get(post.author_id) })));
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadFeed(mode);
+  }, [mode, loadFeed]);
+
+  async function createChirp() {
+    const body = draft.trim();
+    if (!body || !currentUserId || posting) return;
+    setPosting(true);
+    const { error } = await supabase.from('posts').insert({ author_id: currentUserId, body, visibility: 'public', kind: 'chirp' });
+    if (!error) {
+      setDraft('');
+      await loadFeed(mode);
+    } else {
+      alert(error.message);
+    }
+    setPosting(false);
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    window.location.href = '/auth';
+  }
+
+  const emptyMessage = useMemo(() => mode === 'following' ? 'Follow people to build your chronological feed.' : 'Your For You feed is ready for the first Chirp.', [mode]);
 
   return (
     <div className="shell">
@@ -25,6 +85,7 @@ export default function Home() {
           <a href="#"><span>✉&nbsp; Messages</span></a>
           <a href="#"><span>◎&nbsp; Communities</span></a>
           <a href="#"><span>♙&nbsp; Profile</span></a>
+          <button className="tab" onClick={signOut}><span>↪&nbsp; Sign out</span></button>
         </nav>
       </aside>
 
@@ -40,21 +101,27 @@ export default function Home() {
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={10000} placeholder="What’s happening?" />
           <div className="composer-row">
             <div className="tools">▧ Media &nbsp; ◉ Poll &nbsp; ✦ AI</div>
-            <button className="primary" disabled={!draft.trim()}>Chirp</button>
+            <button className="primary" onClick={createChirp} disabled={!draft.trim() || posting}>{posting ? 'Posting…' : 'Chirp'}</button>
           </div>
         </section>
 
         <section aria-label={`${mode} feed`}>
-          {posts.map((post) => (
-            <article className="post" key={post.id}>
-              <div className="avatar">{post.initials}</div>
-              <div>
-                <div className="meta"><span className="name">{post.name}</span><span className="handle">{post.handle}</span><span className="time">· {post.time}</span></div>
-                <p className="body">{post.body}</p>
-                <div className="actions"><span>♡ Reply</span><span>↻ Rechirp</span><span>♥ Like</span><span>⌑ Save</span><span>↗ Share</span></div>
-              </div>
-            </article>
-          ))}
+          {loading && <div className="card" style={{margin:18}}>Loading feed…</div>}
+          {!loading && posts.length === 0 && <div className="card" style={{margin:18}}>{emptyMessage}</div>}
+          {posts.map((post) => {
+            const name = post.author?.display_name ?? 'Chirpx User';
+            const handle = post.author?.username ? `@${post.author.username}` : '@chirpx';
+            return (
+              <article className="post" key={post.id}>
+                <div className="avatar">{name.slice(0,2).toUpperCase()}</div>
+                <div>
+                  <div className="meta"><span className="name">{name}</span><span className="handle">{handle}</span><span className="time">· {new Date(post.created_at).toLocaleString()}</span></div>
+                  <p className="body">{post.body}</p>
+                  <div className="actions"><span>♡ Reply</span><span>↻ Rechirp</span><span>♥ Like</span><span>⌑ Save</span><span>↗ Share</span></div>
+                </div>
+              </article>
+            );
+          })}
         </section>
       </main>
 
