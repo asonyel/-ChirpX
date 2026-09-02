@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   lock:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,15 +18,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Generate lockfile when missing
+      - name: Synchronize lockfile
         run: |
-          if [ -f package-lock.json ]; then
-            echo "package-lock.json already exists"
+          npm install --package-lock-only --ignore-scripts
+          if git diff --quiet -- package-lock.json; then
+            echo "package-lock.json is already synchronized"
             exit 0
           fi
-          npm install --package-lock-only --ignore-scripts
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package-lock.json
-          git commit -m "Lock production npm dependencies"
+          git commit -m "Synchronize production npm lockfile"
           git push origin HEAD:chirpx-production-foundation-v1
