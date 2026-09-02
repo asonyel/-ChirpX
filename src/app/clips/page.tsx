@@ -1,30 +1,57 @@
 'use client';
 
 import { ChangeEvent, useEffect, useRef, useState } from 'react';
+import * as tus from 'tus-js-client';
 import { supabase } from '@/lib/supabase';
 
 type Clip={id:string;post_id:string;owner_id:string;storage_path:string;caption:string;created_at:string;url?:string};
 
+const PROJECT_REF='vfqeosnclfdvmzilcgrv';
+const MEDIA_BUCKET='chirpx-media';
+
 export default function ClipsPage(){
- const [clips,setClips]=useState<Clip[]>([]); const [caption,setCaption]=useState(''); const [file,setFile]=useState<File|null>(null); const [busy,setBusy]=useState(false);
+ const [clips,setClips]=useState<Clip[]>([]); const [caption,setCaption]=useState(''); const [file,setFile]=useState<File|null>(null); const [busy,setBusy]=useState(false); const [progress,setProgress]=useState(0); const [message,setMessage]=useState('');
  useEffect(()=>{void load();},[]);
  async function load(){
    const {data:{user}}=await supabase.auth.getUser(); if(!user){location.href='/auth';return;}
    const {data,error}=await supabase.rpc('clips_for_you',{limit_count:20}); if(error){console.error(error);return;}
    const rows=(data??[]) as Clip[];
-   const hydrated=await Promise.all(rows.map(async c=>{const {data:s}=await supabase.storage.from('chirpx-media').createSignedUrl(c.storage_path,3600);return {...c,url:s?.signedUrl};})); setClips(hydrated);
+   const hydrated=await Promise.all(rows.map(async c=>{const {data:s}=await supabase.storage.from(MEDIA_BUCKET).createSignedUrl(c.storage_path,3600);return {...c,url:s?.signedUrl};})); setClips(hydrated);
+ }
+ async function resumableUpload(path:string, video:File){
+   const {data:{session}}=await supabase.auth.getSession(); if(!session)throw new Error('Your session expired. Please sign in again.');
+   await new Promise<void>((resolve,reject)=>{
+     const upload=new tus.Upload(video,{
+       endpoint:`https://${PROJECT_REF}.storage.supabase.co/storage/v1/upload/resumable`,
+       retryDelays:[0,3000,5000,10000,20000],
+       headers:{authorization:`Bearer ${session.access_token}`},
+       uploadDataDuringCreation:true,
+       removeFingerprintOnSuccess:true,
+       metadata:{bucketName:MEDIA_BUCKET,objectName:path,contentType:video.type||'video/mp4',cacheControl:'3600'},
+       chunkSize:6*1024*1024,
+       onError:(error)=>reject(error),
+       onProgress:(uploaded,total)=>setProgress(total?Math.round((uploaded/total)*100):0),
+       onSuccess:()=>resolve(),
+     });
+     void upload.findPreviousUploads().then(previous=>{if(previous.length)upload.resumeFromPreviousUpload(previous[0]);upload.start();}).catch(reject);
+   });
  }
  async function upload(){
-   if(!file)return; setBusy(true); const {data:{user}}=await supabase.auth.getUser(); if(!user){location.href='/auth';return;}
-   const {data:post,error:postError}=await supabase.from('posts').insert({author_id:user.id,kind:'chirp',visibility:'public',body:caption}).select('id').single(); if(postError||!post){setBusy(false);return;}
-   const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,'-'); const path=`${user.id}/clips/${post.id}/${crypto.randomUUID()}-${safe}`;
-   const up=await supabase.storage.from('chirpx-media').upload(path,file,{contentType:file.type,upsert:false}); if(up.error){setBusy(false);return;}
-   await supabase.from('clips').insert({post_id:post.id,owner_id:user.id,storage_path:path,caption,status:'ready',processing_status:'ready',moderation_status:'pending'});
-   setCaption('');setFile(null);setBusy(false);await load();
+   if(!file)return; setBusy(true); setProgress(0); setMessage('Preparing Clip…');
+   try{
+     const {data:{user}}=await supabase.auth.getUser(); if(!user){location.href='/auth';return;}
+     const {data:post,error:postError}=await supabase.from('posts').insert({author_id:user.id,kind:'chirp',visibility:'public',body:caption}).select('id').single(); if(postError||!post)throw postError??new Error('Could not create Clip post.');
+     const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,'-'); const path=`${user.id}/clips/${post.id}/${crypto.randomUUID()}-${safe}`;
+     setMessage('Uploading securely…'); await resumableUpload(path,file);
+     setMessage('Queuing processing…');
+     const {error:clipError}=await supabase.from('clips').insert({post_id:post.id,owner_id:user.id,storage_path:path,caption,status:'processing',processing_status:'queued',moderation_status:'pending'}); if(clipError)throw clipError;
+     setCaption(''); setFile(null); setProgress(100); setMessage('Upload complete. Chirpx is preparing your Clip.'); await load();
+   }catch(error){console.error(error);setMessage(error instanceof Error?error.message:'Clip upload failed.');}
+   finally{setBusy(false);}
  }
  return <main style={{maxWidth:680,margin:'0 auto',padding:20}}>
    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><a href="/" className="brand">Chirp<span>x</span></a><h1>Clips</h1></div>
-   <section className="card" style={{padding:16,margin:'16px 0'}}><input type="file" accept="video/mp4,video/webm" onChange={(e:ChangeEvent<HTMLInputElement>)=>setFile(e.target.files?.[0]??null)}/><textarea value={caption} onChange={e=>setCaption(e.target.value)} placeholder="Caption your Clip" maxLength={2200} style={{width:'100%',margin:'12px 0',minHeight:80,background:'#151c26',color:'white',border:'1px solid #253041',borderRadius:12,padding:12}}/><button className="primary" onClick={upload} disabled={!file||busy}>{busy?'Uploading…':'Publish Clip'}</button><div className="muted" style={{marginTop:8}}>Large-video resumable upload and transcoding workers are the next media-infrastructure step.</div></section>
+   <section className="card" style={{padding:16,margin:'16px 0'}}><input type="file" accept="video/mp4,video/webm" onChange={(e:ChangeEvent<HTMLInputElement>)=>setFile(e.target.files?.[0]??null)}/><textarea value={caption} onChange={e=>setCaption(e.target.value)} placeholder="Caption your Clip" maxLength={2200} style={{width:'100%',margin:'12px 0',minHeight:80,background:'#151c26',color:'white',border:'1px solid #253041',borderRadius:12,padding:12}}/><button className="primary" onClick={upload} disabled={!file||busy}>{busy?`Uploading ${progress}%`:'Publish Clip'}</button>{busy&&<div aria-label="Upload progress" style={{height:8,background:'#151c26',borderRadius:999,overflow:'hidden',marginTop:10}}><div style={{height:'100%',width:`${progress}%`,background:'#e91e63',transition:'width .2s ease'}}/></div>}{message&&<div className="muted" style={{marginTop:8}}>{message}</div>}</section>
    <section style={{height:'82vh',overflowY:'auto',scrollSnapType:'y mandatory',display:'grid',gap:12}}>{clips.map(c=><ClipCard key={c.id} clip={c}/>)}</section>
  </main>;
 }
